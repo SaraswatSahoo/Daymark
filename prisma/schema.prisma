@@ -1,0 +1,182 @@
+// Daymark database schema.
+//
+// Conventions
+// - Calendar dates that are not instants (task due dates, journal dates, "My Day")
+//   are stored as ISO "YYYY-MM-DD" strings. They mean the same calendar day in any
+//   timezone and sort lexicographically.
+// - Points in time (reminders, timestamps) are stored as DateTime (UTC).
+// - Enumerations are strings validated with Zod at the server boundary, which keeps
+//   a future PostgreSQL migration straightforward.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Settings {
+  id                   Int      @id @default(1)
+  displayName          String   @default("")
+  theme                String   @default("system") // light | dark | system
+  accent               String   @default("indigo")
+  timezone             String? // IANA zone; null until detected from the browser
+  weekStart            Int      @default(1) // 0 = Sunday, 1 = Monday
+  dateFormat           String   @default("MMM d, yyyy")
+  timeFormat           String   @default("12h") // 12h | 24h
+  defaultPriority      Int      @default(1)
+  defaultReminderTime  String   @default("09:00")
+  defaultSnoozeMinutes Int      @default(10)
+  dashboardLayout      String   @default("[]") // JSON: [{ id, visible }]
+  updatedAt            DateTime @updatedAt
+}
+
+model Project {
+  id          String     @id @default(cuid())
+  name        String
+  description String     @default("")
+  color       String     @default("slate")
+  icon        String?
+  sortOrder   Float      @default(0)
+  archivedAt  DateTime?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  tasks       Task[]
+  notes       Note[]
+  reminders   Reminder[]
+
+  @@index([archivedAt])
+}
+
+model Tag {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  color     String   @default("slate")
+  createdAt DateTime @default(now())
+  tasks     Task[]
+  notes     Note[]
+}
+
+model Task {
+  id          String     @id @default(cuid())
+  title       String
+  description String     @default("")
+  status      String     @default("todo") // todo | in_progress | done
+  priority    Int        @default(1) // 0 low, 1 medium, 2 high, 3 urgent
+  dueDate     String? // YYYY-MM-DD
+  dueTime     String? // HH:mm (only meaningful with dueDate)
+  myDayDate   String? // YYYY-MM-DD the task was added to My Day
+  inbox       Boolean    @default(false)
+  sortOrder   Float      @default(0)
+  recurrence  String? // JSON { freq, interval }
+  seriesId    String? // shared by all occurrences of a recurring task
+  completedAt DateTime?
+  archivedAt  DateTime?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  projectId   String?
+  project     Project?   @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  noteId      String?
+  note        Note?      @relation(fields: [noteId], references: [id], onDelete: SetNull)
+  tags        Tag[]
+  subtasks    Subtask[]
+  reminders   Reminder[]
+
+  @@index([status, dueDate])
+  @@index([projectId])
+  @@index([noteId])
+  @@index([completedAt])
+  @@index([archivedAt])
+  @@index([myDayDate])
+  @@index([seriesId])
+}
+
+model Subtask {
+  id        String   @id @default(cuid())
+  title     String
+  done      Boolean  @default(false)
+  sortOrder Float    @default(0)
+  createdAt DateTime @default(now())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([taskId])
+}
+
+model Note {
+  id          String     @id @default(cuid())
+  title       String     @default("")
+  content     String     @default("")
+  pinned      Boolean    @default(false)
+  inbox       Boolean    @default(false)
+  journalDate String?    @unique // YYYY-MM-DD for journal entries
+  archivedAt  DateTime?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  projectId   String?
+  project     Project?   @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  tags        Tag[]
+  tasks       Task[]
+  reminders   Reminder[]
+  linksFrom   NoteLink[] @relation("linkFrom")
+  linksTo     NoteLink[] @relation("linkTo")
+
+  @@index([updatedAt])
+  @@index([projectId])
+  @@index([archivedAt])
+  @@index([pinned])
+}
+
+model NoteLink {
+  fromId    String
+  toId      String
+  createdAt DateTime @default(now())
+  from      Note     @relation("linkFrom", fields: [fromId], references: [id], onDelete: Cascade)
+  to        Note     @relation("linkTo", fields: [toId], references: [id], onDelete: Cascade)
+
+  @@id([fromId, toId])
+  @@index([toId])
+}
+
+model Reminder {
+  id          String    @id @default(cuid())
+  title       String
+  description String    @default("")
+  remindAt    DateTime
+  status      String    @default("pending") // pending | done | dismissed
+  recurrence  String? // JSON { freq, interval }
+  notifiedAt  DateTime? // when the in-app notifier claimed it
+  pushedAt    DateTime? // when a web-push notification was sent
+  snoozeCount Int       @default(0)
+  completedAt DateTime?
+  dismissedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  taskId      String?
+  task        Task?     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  noteId      String?
+  note        Note?     @relation(fields: [noteId], references: [id], onDelete: SetNull)
+  projectId   String?
+  project     Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  @@index([status, remindAt])
+  @@index([taskId])
+}
+
+model InboxItem {
+  id        String   @id @default(cuid())
+  content   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model PushSubscription {
+  id        String   @id @default(cuid())
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  userAgent String?
+  createdAt DateTime @default(now())
+}
