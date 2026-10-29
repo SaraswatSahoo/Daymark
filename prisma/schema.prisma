@@ -6,15 +6,18 @@
 //   timezone and sort lexicographically.
 // - Points in time (reminders, timestamps) are stored as DateTime (UTC).
 // - Enumerations are strings validated with Zod at the server boundary, which keeps
-//   a future PostgreSQL migration straightforward.
+//   the schema portable across databases.
 
 generator client {
   provider = "prisma-client-js"
 }
 
+// DATABASE_URL is the pooled connection the app uses at runtime; DIRECT_URL is a
+// direct (unpooled) connection used by `prisma migrate`. Locally both can be the same.
 datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 model Settings {

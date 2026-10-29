@@ -85,7 +85,7 @@ export function buildTaskWhere(filter: TaskFilter, ctx: TaskContext): Prisma.Tas
   }
   if (filter.q?.trim()) {
     const q = filter.q.trim();
-    and.push({ OR: [{ title: { contains: q } }, { description: { contains: q } }] });
+    and.push({ OR: [{ title: { contains: q, mode: "insensitive" } }, { description: { contains: q, mode: "insensitive" } }] });
   }
   return { AND: and };
 }
@@ -403,7 +403,7 @@ export async function getCompletedTasks(limit = 300): Promise<TaskDTO[]> {
 
 export async function listTaskOptions(query: string, limit = 20) {
   return db.task.findMany({
-    where: { archivedAt: null, ...(query ? { title: { contains: query } } : {}) },
+    where: { archivedAt: null, ...(query ? { title: { contains: query, mode: "insensitive" } } : {}) },
     select: { id: true, title: true, status: true },
     orderBy: { updatedAt: "desc" },
     take: limit,

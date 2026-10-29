@@ -1,5 +1,6 @@
 import { defineConfig } from "vitest/config";
 import path from "node:path";
+import { TEST_DB } from "./tests/global-setup";
 
 export default defineConfig({
   resolve: {
@@ -14,7 +15,8 @@ export default defineConfig({
     environment: "node",
     globalSetup: ["tests/global-setup.ts"],
     env: {
-      DATABASE_URL: "file:./test.db",
+      DATABASE_URL: TEST_DB,
+      DIRECT_URL: TEST_DB,
       TZ: "UTC",
       GROQ_API_KEY: "",
     },

@@ -1,0 +1,18 @@
+# Local PostgreSQL for development and tests. Production uses Neon (see README → Deploy).
+#   docker compose up -d
+name: daymark
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: daymark
+      POSTGRES_PASSWORD: daymark
+      POSTGRES_DB: daymark
+    ports:
+      - "127.0.0.1:5434:5432"
+    volumes:
+      - daymark-pg:/var/lib/postgresql/data
+
+volumes:
+  daymark-pg:

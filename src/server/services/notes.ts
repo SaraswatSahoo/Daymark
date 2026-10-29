@@ -25,7 +25,7 @@ export async function listNotes(filter: NoteFilter = {}, take = 500): Promise<No
   if (filter.journal === "only") and.push({ journalDate: { not: null } });
   else if (filter.journal === false) and.push({ journalDate: null });
   const q = filter.q?.trim().slice(0, 200);
-  if (q) and.push({ OR: [{ title: { contains: q } }, { content: { contains: q } }] });
+  if (q) and.push({ OR: [{ title: { contains: q, mode: "insensitive" } }, { content: { contains: q, mode: "insensitive" } }] });
 
   const orderBy: Prisma.NoteOrderByWithRelationInput[] =
     filter.sort === "title"
@@ -59,7 +59,7 @@ export async function getNote(id: string): Promise<NoteDetailDTO | null> {
   // Backlinks: other notes that reference this one with [[Title]].
   const backlinks = note.title.trim()
     ? await db.note.findMany({
-        where: { id: { not: id }, archivedAt: null, content: { contains: `[[${note.title.trim()}]]` } },
+        where: { id: { not: id }, archivedAt: null, content: { contains: `[[${note.title.trim()}]]`, mode: "insensitive" } },
         select: { id: true, title: true },
         take: 50,
       })
@@ -186,7 +186,7 @@ export async function listNoteOptions(query: string, excludeId?: string, limit =
     where: {
       archivedAt: null,
       ...(excludeId ? { id: { not: excludeId } } : {}),
-      ...(query ? { title: { contains: query } } : {}),
+      ...(query ? { title: { contains: query, mode: "insensitive" } } : {}),
     },
     select: { id: true, title: true },
     orderBy: { updatedAt: "desc" },

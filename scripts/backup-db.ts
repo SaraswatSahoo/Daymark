@@ -1,26 +1,26 @@
 /**
- * Consistent online backup of the SQLite database (safe while the app is running).
+ * Full JSON backup of the database (the same format as Settings → Data & backups).
  *
- *   npm run db:backup                 # → backups/daymark-YYYY-MM-DDTHH-MM-SS.db
+ *   npm run db:backup                 # → backups/daymark-YYYY-MM-DDTHH-MM-SS.json
  *   npm run db:backup -- --keep 14    # also delete all but the 14 newest backups
  *
- * Uses SQLite's `VACUUM INTO`, which writes a compact, transactionally consistent copy.
- * Restore by stopping the app and copying a backup over the file named in DATABASE_URL.
+ * Works against any DATABASE_URL, including Neon. Restore with Settings → Import
+ * (Merge or Replace). Runs with `--conditions=react-server` so `server-only` allows it.
  */
-import { mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
+import { mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { PrismaClient } from "@prisma/client";
+import { db } from "../src/server/db";
+import { exportAll } from "../src/server/services/backup";
 
 async function main() {
   const keepIdx = process.argv.indexOf("--keep");
   const keep = keepIdx > -1 ? Number(process.argv[keepIdx + 1]) : 0;
   const dir = path.resolve(process.cwd(), "backups");
   mkdirSync(dir, { recursive: true });
-  const file = path.join(dir, `daymark-${new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)}.db`);
+  const file = path.join(dir, `daymark-${new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)}.json`);
 
-  const db = new PrismaClient();
   try {
-    await db.$executeRawUnsafe(`VACUUM INTO '${file.replace(/'/g, "''")}'`);
+    writeFileSync(file, JSON.stringify(await exportAll(), null, 2));
   } finally {
     await db.$disconnect();
   }
@@ -29,7 +29,7 @@ async function main() {
 
   if (keep > 0) {
     const backups = readdirSync(dir)
-      .filter((f) => /^daymark-.*\.db$/.test(f))
+      .filter((f) => /^daymark-.*\.json$/.test(f))
       .sort()
       .reverse();
     for (const old of backups.slice(keep)) {

@@ -2,7 +2,7 @@
 
 A calm, self-hosted personal productivity workspace: quick capture, an Inbox, notes and a daily journal, tasks with subtasks and recurrence, reminders with real notifications, a calendar, projects and tags, global search, a weekly review, and a few optional AI helpers that use **your own Groq API key**.
 
-Single-user, local-first, and fast. Everything except the AI features works offline from any AI service; all data lives in one SQLite file you own.
+Single-user, local-first, and fast. Everything except the AI features works offline from any AI service; all data lives in one PostgreSQL database you own. Run it on your own machine, or free on [Vercel + Neon](#deploy-free-on-vercel--neon).
 
 > Product name, accent and colors are easy to change — see [Customization](#customization).
 
@@ -17,7 +17,7 @@ Single-user, local-first, and fast. Everything except the AI features works offl
 - [Notifications: what works out of the box](#notifications-what-works-out-of-the-box)
 - [Using Daymark from your phone or another device](#using-daymark-from-your-phone-or-another-device)
 - [Data, backups and restore](#data-backups-and-restore)
-- [Deployment notes](#deployment-notes)
+- [Deploy free on Vercel + Neon](#deploy-free-on-vercel--neon)
 - [Testing](#testing)
 - [Project structure](#project-structure)
 - [Customization](#customization)
@@ -66,7 +66,7 @@ Single-user, local-first, and fast. Everything except the AI features works offl
 
 ## Quick start
 
-Requirements: **Node.js 20.9+** (developed on Node 26) and npm.
+Requirements: **Node.js 20.9+** (developed on Node 26), npm, and PostgreSQL. The included `docker-compose.yml` runs one locally on port 5434.
 
 ```bash
 # 1. Install dependencies (also generates the Prisma client)
@@ -75,7 +75,8 @@ npm install
 # 2. Configure environment
 cp .env.example .env          # then edit .env if you want AI, a password or push
 
-# 3. Create the database (applies migrations to prisma/daymark.db)
+# 3. Start Postgres and create the tables
+npm run db:up                 # docker compose up -d
 npm run setup
 
 # 4a. Development
@@ -91,9 +92,8 @@ npm start                     # http://localhost:3000  (PORT=4000 npm start to c
 Want to look around first? Load demo content **into a separate database**:
 
 ```bash
-DATABASE_URL="file:./demo.db" npx prisma migrate deploy
-DATABASE_URL="file:./demo.db" npm run db:seed-demo
-DATABASE_URL="file:./demo.db" npm run dev
+export DATABASE_URL="postgresql://daymark:daymark@localhost:5434/daymark?schema=demo" DIRECT_URL="$DATABASE_URL"
+npx prisma migrate deploy && npm run db:seed-demo && npm run dev
 ```
 
 The seeder never runs automatically and refuses to touch a database that already has content unless you pass `--force`.
@@ -104,7 +104,9 @@ The seeder never runs automatically and refuses to touch a database that already
 
 | Variable | Required | Purpose |
 |---|---|---|
-| `DATABASE_URL` | yes | SQLite file, relative to `prisma/`. Default `file:./daymark.db`. Keep it on persistent storage. |
+| `DATABASE_URL` | yes | PostgreSQL connection string the app uses. Locally the default from `.env.example`; on Neon, the **pooled** string. |
+| `DIRECT_URL` | yes | Direct (unpooled) connection used by migrations. Locally the same as `DATABASE_URL`. |
+| `CRON_SECRET` | on Vercel | Protects `/api/cron/push`, which sends push reminders on serverless hosts. |
 | `APP_PASSWORD` | recommended off-localhost | Enables a sign-in page. Without it, anyone who can reach the server can read your data. |
 | `SESSION_SECRET` | no | Signs the session cookie. Defaults to a value derived from `APP_PASSWORD`. Changing either signs you out everywhere. |
 | `GROQ_API_KEY` | no | Enables the AI features. Leave empty to disable AI completely. |
@@ -183,7 +185,7 @@ npm run vapid          # prints a public and private key
 npm run build && npm start
 ```
 
-When VAPID keys are present, `src/instrumentation.ts` starts a scheduler inside the Node server. Every 30 s it sends a push for each newly due reminder. Each reminder is claimed in the database first, so it is never sent twice, and reminders more than 12 h stale are skipped. This needs a persistent server process. It does **not** run on serverless platforms. iOS supports web push only for apps added to the Home Screen (iOS 16.4+).
+When VAPID keys are present, `src/instrumentation.ts` starts a scheduler inside the Node server. Every 30 s it sends a push for each newly due reminder. Each reminder is claimed in the database first, so it is never sent twice, and reminders more than 12 h stale are skipped. This needs a persistent server process. On Vercel the scheduler is skipped; an external cron calls `/api/cron/push` instead (see [Deploy](#deploy-free-on-vercel--neon)). iOS supports web push only for apps added to the Home Screen (iOS 16.4+).
 
 ---
 
@@ -202,12 +204,12 @@ Don't expose Daymark to the public internet without `APP_PASSWORD` **and** HTTPS
 
 ## Data, backups and restore
 
-All data is in the SQLite file named by `DATABASE_URL` (default `prisma/daymark.db`, plus `-wal`/`-shm` files while running; WAL mode is enabled).
+All data is in the PostgreSQL database named by `DATABASE_URL`. Neon also keeps its own point-in-time history (a short window on the free plan).
 
 **Backups**
 
 ```bash
-npm run db:backup                 # consistent copy → backups/daymark-<timestamp>.db (safe while running)
+npm run db:backup                 # full JSON backup → backups/daymark-<timestamp>.json (safe while running)
 npm run db:backup -- --keep 14    # …and keep only the 14 newest
 ```
 
@@ -217,7 +219,9 @@ Schedule it with cron, for example daily at 2 am:
 0 2 * * * cd /path/to/daymark && npm run db:backup -- --keep 30 >> backups/backup.log 2>&1
 ```
 
-**Restore a database backup:** stop the app, copy the backup over `prisma/daymark.db` (delete any `daymark.db-wal`/`-shm` files), and start again.
+Run it with `DATABASE_URL` set to your Neon connection string to back up the cloud copy.
+
+**Restore a backup:** Settings → Data & backups → Import, using Merge or Replace.
 
 **In-app export and import** (Settings → Data & backups):
 - **Full backup (JSON):** everything, including settings, in a documented, versioned format (`src/lib/backup-schema.ts`).
@@ -229,11 +233,33 @@ Schedule it with cron, for example daily at 2 am:
 
 ---
 
-## Deployment notes
+## Deploy free on Vercel + Neon
 
-- Daymark needs **a persistent filesystem** for SQLite. Good fits: your own machine, a home server or NAS, a small VPS, or a Docker host with a mounted volume. Serverless platforms such as Vercel or Netlify functions **do not** keep a local SQLite file, so data would be lost.
-- Run `npm run setup` (migrations) on each deploy before `npm start`.
-- **Moving to PostgreSQL later:** all DB access goes through Prisma in `src/server/services/*`. Enumerations are validated strings, and dates are ISO strings or UTC timestamps. Switch `provider = "postgresql"` in `prisma/schema.prisma`, point `DATABASE_URL` at Postgres, create a fresh migration, and move data with the JSON export/import. Search uses Prisma `contains`, which is case-sensitive on Postgres; add `mode: "insensitive"` there.
+Vercel runs the app and Neon hosts the database. Both have free plans that need no credit card, and you get an HTTPS address that works on your phone, including Add to Home Screen and push notifications.
+
+1. **Create the database.** Sign up at <https://neon.tech>, create a project, and open **Connect**. Copy two connection strings:
+   - the **pooled** one (its host contains `-pooler`) → `DATABASE_URL`
+   - the direct one (turn pooling off) → `DIRECT_URL`
+2. **Import the repo into Vercel.** Sign up at <https://vercel.com> with GitHub, then **Add New → Project** and pick this repository. The build command comes from `vercel.json` (`prisma migrate deploy && next build`), so tables are created or updated on every deploy.
+3. **Add environment variables** in the import screen (or later in Project → Settings → Environment Variables), then deploy:
+
+   | Variable | Value |
+   |---|---|
+   | `DATABASE_URL`, `DIRECT_URL` | from step 1 |
+   | `APP_PASSWORD` | **required** — the app is on the public internet |
+   | `SESSION_SECRET` | `openssl rand -base64 32` |
+   | `CRON_SECRET` | `openssl rand -hex 32` |
+   | `GROQ_API_KEY`, `GROQ_MODEL` | optional, for AI |
+   | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | optional, for push |
+
+4. **Push reminders (optional).** Vercel's free plan can't keep a background timer running, and its built-in cron runs only once a day. Instead, create a free job at <https://cron-job.org> that calls `https://<your-app>.vercel.app/api/cron/push` **every minute** with the header `Authorization: Bearer <CRON_SECRET>`. A response of `{"ok":true,...}` means it works.
+5. **Phone:** open the Vercel URL in Safari, sign in, then **Share → Add to Home Screen**. Enable push from the Home Screen app under Settings → Notifications.
+
+Every push to `main` deploys automatically.
+
+**Free plan notes.** Neon's free compute sleeps when idle, so the first request after a quiet spell takes a moment longer. The every-minute cron keeps it awake; that's within the free plan's limits for a personal app, but check Neon's current quotas. Vercel's free Hobby plan is for personal, non-commercial use.
+
+**Self-hosting instead:** any always-on machine works. Point `DATABASE_URL`/`DIRECT_URL` at a Postgres server, run `npm run setup` on each deploy, then `npm run build && npm start`. The built-in 30-second scheduler handles push there, and `CRON_SECRET` isn't needed.
 
 ---
 
@@ -242,13 +268,13 @@ Schedule it with cron, for example daily at 2 am:
 ```bash
 npm run lint          # ESLint (Next.js + React Compiler rules)
 npm run typecheck     # tsc --noEmit (strict)
-npm test              # Vitest: unit + integration tests (uses an isolated prisma/test.db)
+npm test              # Vitest: unit + integration tests (isolated "test" schema in the local Postgres)
 npm run build         # production build
 npx playwright install chromium   # once
-npm run test:e2e      # Playwright E2E against the production build (isolated prisma/e2e.db)
+npm run test:e2e      # Playwright E2E against the production build (isolated "e2e" schema in the local Postgres)
 ```
 
-The integration tests run the real services against a freshly migrated SQLite database. The AI tests run against a local mock of Groq's OpenAI-compatible API, so they need no key or network. The E2E suite starts `next start` on port 3210 with its own database. Run `npm run build` before `npm run test:e2e`.
+The integration tests run the real services against a freshly migrated schema in the local Postgres (`npm run db:up` first). The AI tests run against a local mock of Groq's OpenAI-compatible API, so they need no key or network. The E2E suite starts `next start` on port 3210 with its own database. Run `npm run build` before `npm run test:e2e`.
 
 **Last results (2026-10-29, Node 26.12, Linux):**
 
@@ -270,7 +296,7 @@ Not verified automatically: calls to the real Groq API (no key in this environme
 
 ```
 prisma/
-  schema.prisma            # data model (SQLite)
+  schema.prisma            # data model (PostgreSQL)
   migrations/              # versioned migrations
 scripts/                   # backup-db, seed-demo, generate-icons
 public/sw.js               # service worker: notifications + push (no offline caching)
@@ -286,7 +312,7 @@ src/
                            #        reminders poll/actions, push
     login/                 # sign-in page (when APP_PASSWORD is set)
   server/
-    db.ts                  # Prisma client (WAL, busy timeout)
+    db.ts                  # Prisma client
     services/              # business logic + queries (tasks, notes, reminders, inbox, …)
     actions/               # server actions: validation → service → revalidate
     ai/                    # Groq client, error mapping, operations
@@ -322,6 +348,6 @@ docs/ARCHITECTURE.md       # design decisions and implementation checklist
 - **Calendar sync:** `.ics` export only. There is no two-way sync with Google or Apple calendars, no events with durations, and no drag-and-drop rescheduling.
 - **Recurring tasks** only show the next occurrence on the calendar, not a projected series. The `.ics` export does include `RRULE`s.
 - **Reordering** uses Move up/Move down (keyboard and touch friendly), not drag and drop.
-- **Search** uses SQLite `LIKE` (case-insensitive for ASCII only). This is fine for personal data volumes. FTS5 would be the next step for very large libraries.
+- **Search** uses case-insensitive Postgres `ILIKE`. This is fine for personal data volumes. Full-text search (`tsvector`) would be the next step for very large libraries.
 - **Notes editor** is a Markdown text editor with live preview, not WYSIWYG rich text.
 - **The `npm audit` warnings** come from build-time CLIs (Prisma's config loader and the shadcn CLI), not from code that runs in the app.

@@ -26,9 +26,9 @@ function rank<T extends { title: string }>(items: T[], q: string): T[] {
 }
 
 /**
- * Global search across notes, tasks, projects and reminders. SQLite LIKE is
- * case-insensitive for ASCII and fast enough for a personal dataset; titles rank
- * above body matches.
+ * Global search across notes, tasks, projects and reminders. Matching is
+ * case-insensitive (Postgres ILIKE) and fast enough for a personal dataset; titles
+ * rank above body matches.
  */
 export async function searchAll(rawQuery: string, limit = 8): Promise<SearchResults> {
   const q = rawQuery.trim().slice(0, 200);
@@ -36,24 +36,24 @@ export async function searchAll(rawQuery: string, limit = 8): Promise<SearchResu
 
   const [tasks, notes, projects, reminders] = await Promise.all([
     db.task.findMany({
-      where: { archivedAt: null, OR: [{ title: { contains: q } }, { description: { contains: q } }] },
+      where: { archivedAt: null, OR: [{ title: { contains: q, mode: "insensitive" } }, { description: { contains: q, mode: "insensitive" } }] },
       select: { id: true, title: true, description: true, status: true, dueDate: true },
       orderBy: { updatedAt: "desc" },
       take: limit * 3,
     }),
     db.note.findMany({
-      where: { archivedAt: null, OR: [{ title: { contains: q } }, { content: { contains: q } }] },
+      where: { archivedAt: null, OR: [{ title: { contains: q, mode: "insensitive" } }, { content: { contains: q, mode: "insensitive" } }] },
       select: { id: true, title: true, content: true, updatedAt: true },
       orderBy: { updatedAt: "desc" },
       take: limit * 3,
     }),
     db.project.findMany({
-      where: { archivedAt: null, OR: [{ name: { contains: q } }, { description: { contains: q } }] },
+      where: { archivedAt: null, OR: [{ name: { contains: q, mode: "insensitive" } }, { description: { contains: q, mode: "insensitive" } }] },
       select: { id: true, name: true, color: true },
       take: limit,
     }),
     db.reminder.findMany({
-      where: { status: "pending", OR: [{ title: { contains: q } }, { description: { contains: q } }] },
+      where: { status: "pending", OR: [{ title: { contains: q, mode: "insensitive" } }, { description: { contains: q, mode: "insensitive" } }] },
       select: { id: true, title: true, remindAt: true, status: true },
       orderBy: { remindAt: "asc" },
       take: limit,

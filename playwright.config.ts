@@ -1,10 +1,11 @@
 import { defineConfig, devices } from "@playwright/test";
 
 const PORT = Number(process.env.E2E_PORT ?? 3210);
+const E2E_DB = process.env.E2E_DATABASE_URL ?? "postgresql://daymark:daymark@localhost:5434/daymark?schema=e2e";
 
 /**
  * End-to-end tests run against a production build (`npm run build` first) with an
- * isolated database (prisma/e2e.db) so your real data is never touched.
+ * isolated schema ("e2e" in the local Postgres) so your real data is never touched.
  */
 export default defineConfig({
   testDir: "./e2e",
@@ -26,7 +27,8 @@ export default defineConfig({
     reuseExistingServer: false,
     timeout: 60_000,
     env: {
-      DATABASE_URL: "file:./e2e.db",
+      DATABASE_URL: E2E_DB,
+      DIRECT_URL: E2E_DB,
       GROQ_API_KEY: "",
       APP_PASSWORD: "",
       VAPID_PUBLIC_KEY: "",
